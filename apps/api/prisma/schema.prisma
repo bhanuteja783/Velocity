@@ -14,6 +14,7 @@ model User {
   role Role
   createdAt DateTime @default(now())
   ownedProjects Project[] @relation("ProjectOwner")
+  refreshTokens RefreshToken[]
   assignedTasks Task[] @relation("TaskAssignee")
   activities Activity[]
   notifications Notification[]
@@ -23,11 +24,29 @@ model Project {
   name String
   description String
   ownerId String
+  clientId String
   createdAt DateTime @default(now())
   owner User @relation("ProjectOwner", fields:[ownerId], references:[id], onDelete:Restrict)
+  client Client @relation(fields:[clientId], references:[id], onDelete:Restrict)
   tasks Task[]
   activities Activity[]
   @@index([ownerId])
+  @@index([clientId])
+}
+model Client {
+  id String @id @default(cuid())
+  name String @unique
+  createdAt DateTime @default(now())
+  projects Project[]
+}
+model RefreshToken {
+  id String @id @default(cuid())
+  tokenHash String @unique
+  userId String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  @@index([userId,expiresAt])
 }
 model Task {
   id String @id @default(cuid())
