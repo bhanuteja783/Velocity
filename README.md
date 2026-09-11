@@ -3,27 +3,30 @@
 A production-minded full-stack implementation of the Velozity Global Solutions technical hiring assessment.
 
 ## Stack
-- **Frontend:** React + TypeScript + Vite
-- **Backend:** Node.js + Express + TypeScript
-- **Database:** PostgreSQL + Prisma
-- **Realtime:** Socket.IO over WebSockets
-- **Background jobs:** node-cron
-- **Validation:** Zod on every write/query endpoint
-- **Auth:** JWT access token held in memory on the client; password hashes with bcrypt
+- React + TypeScript + Vite
+- Node.js + Express + TypeScript
+- PostgreSQL + Prisma
+- Socket.IO over WebSockets
+- node-cron for scheduled overdue processing
+- Zod server-side validation
+- JWT authentication + bcrypt password hashing
 
-## Features
-- Role-based Admin / Project Manager / Developer access.
-- Project ownership isolation for PMs.
-- Tasks with status, priority, assignee, due date and persistent activity history.
-- Scheduled overdue-task job; overdue is not calculated on page load.
-- Live project activity feed and online presence with Socket.IO.
-- Last 20 persisted activity events returned from PostgreSQL after reconnect.
-- Role-scoped activity visibility.
-- Live notification badge and notification dropdown.
-- Admin/PM/Developer dashboards.
-- Shareable task filters through URL query parameters.
-- Structured API errors and server-side validation.
-- Seed data: 1 Admin, 2 PMs, 4 Developers, 3 projects, 18 tasks and activity history.
+## Implemented requirements
+- Admin, Project Manager and Developer roles with server-side authorization.
+- PMs can only manage projects they own.
+- Tasks contain title, description, assignee, status, priority, due date and persistent activity history.
+- Status changes are written to PostgreSQL and broadcast through Socket.IO.
+- Overdue tasks are flagged by an hourly node-cron job, not during page load.
+- Project activity is delivered live to project rooms.
+- Admin receives global activity; PM activity is limited to owned projects; developers see activity for assigned tasks.
+- The API restores the latest 20 persisted activity events from PostgreSQL after reconnect/login.
+- Presence is broadcast as a live Socket.IO count.
+- Notifications are persisted, unread counts update through WebSockets, and users can mark one/all as read.
+- Dashboard endpoints provide role-specific metrics.
+- Task filters are represented by URL query parameters: status, priority, from, to and projectId.
+- Every API input is validated server-side and errors use a consistent `{ error: { code, message, details? } }` structure.
+- Secrets are environment variables only.
+- Seed script creates 1 Admin, 2 PMs, 4 Developers, 3 projects, 18 tasks, two overdue tasks and existing activity.
 
 ## Architecture
 ```text
@@ -34,16 +37,17 @@ React/TS (Vercel) ──HTTP/JWT──> Express API ──Prisma──> PostgreS
                                node-cron scheduler
 ```
 
-Socket.IO was chosen over a raw WebSocket implementation because it provides rooms, reconnect handling, acknowledgements and presence-oriented primitives while still using WebSockets for the real-time channel. No polling or SSE is used for application realtime events.
+Socket.IO was selected over native WebSocket because it supplies rooms, reconnect behavior and presence-friendly primitives while the application transport remains WebSocket. The application does not use long-polling or SSE for its real-time features.
 
-`node-cron` is appropriate here because the only scheduled workload is a small deterministic overdue scan. A durable queue would be preferable for high-volume jobs or retries, but would add infrastructure that this assessment does not require.
+node-cron is sufficient for this deterministic hourly overdue scan. A durable queue would be preferable for a high-volume/retry-heavy workload, but would add infrastructure not required by this assessment.
 
-### Indexing decisions
-- `Project.ownerId` supports PM project isolation.
-- `Task.projectId`, `Task.assigneeId`, `Task.status`, `Task.priority`, `Task.dueDate` support dashboards and task filters.
-- `Activity.projectId`, `Activity.createdAt` supports project/global feeds.
-- `Notification.userId`, `Notification.readAt` supports unread notification queries.
-- Composite indexes cover the most common scoped feed/task queries.
+### Database/indexing
+- `Project.ownerId`: PM ownership isolation.
+- `Task.projectId`, `assigneeId`, `status`, `priority`, `dueDate`: filters and dashboard queries.
+- Composite `Task(projectId,status,priority,dueDate)`: common project task filtering/sorting.
+- `Activity(projectId,createdAt)`: project feed retrieval.
+- `Notification(userId,readAt,createdAt)`: unread badge and notification history.
+- All relations use PostgreSQL foreign keys with explicit delete behavior.
 
 ## Local setup
 Prerequisites: Node 20+, npm 10+, Docker.
@@ -58,12 +62,12 @@ npm run db:seed
 npm run dev
 ```
 
-Web: http://localhost:5173  
+Frontend: http://localhost:5173  
 API: http://localhost:4000  
 Health: http://localhost:4000/health
 
-### Demo accounts
-All seeded accounts use password `Password123!`.
+### Seed accounts
+Password for all accounts: `Password123!`
 - admin@velozity.local
 - pm1@velozity.local
 - pm2@velozity.local
@@ -73,43 +77,44 @@ All seeded accounts use password `Password123!`.
 - dev4@velozity.local
 
 ## Deployment
-The React frontend is Vercel-compatible. The API must run on a long-lived Node host that supports WebSocket upgrades because the assessment requires persistent Socket.IO connections. Set `VITE_API_URL` and `VITE_SOCKET_URL` in the frontend deployment and `DATABASE_URL`, `JWT_SECRET`, `CLIENT_ORIGIN` on the API host.
+The React/Vite frontend is Vercel-compatible. The Socket.IO API should run on a long-lived Node host that supports WebSocket upgrades. Configure `VITE_API_URL` and `VITE_SOCKET_URL` on the frontend, and `DATABASE_URL`, `JWT_SECRET`, `CLIENT_ORIGIN` and `PORT` on the API.
 
-A single Vercel serverless function is deliberately not used for the Socket.IO backend because serverless request lifecycles are not a reliable fit for persistent WebSocket connections.
+A serverless-only Vercel backend is intentionally avoided for the WebSocket server because persistent Socket.IO connections need a host that supports long-lived WebSocket upgrades.
 
-## Security decisions
-- Secrets are read only from environment variables.
-- Passwords are never stored in plaintext.
-- JWT is validated server-side for every protected API route and Socket.IO handshake.
-- Authorization is enforced server-side, not only by hiding frontend controls.
-- Prisma relations and foreign keys enforce data integrity.
-- Error responses use `{ error: { code, message, details? } }` and production responses never expose stack traces.
+## Security
+- Passwords are bcrypt hashes, never plaintext.
+- JWT is verified on every protected HTTP endpoint and Socket.IO handshake.
+- Authorization is enforced on the server.
+- No credentials are hardcoded.
+- Production errors do not expose stack traces.
+
+## API
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `GET/POST /api/projects`
+- `GET/POST /api/tasks`
+- `PATCH /api/tasks/:id/status`
+- `GET /api/activity`
+- `GET /api/notifications`
+- `PATCH /api/notifications/:id/read`
+- `POST /api/notifications/read-all`
+- `GET /api/dashboard`
 
 ## Assessment checklist
-- [x] React with TypeScript
-- [x] Express + TypeScript
-- [x] PostgreSQL + Prisma + relational foreign keys
-- [x] Socket.IO WebSockets
-- [x] node-cron overdue scheduler
+- [x] React + TypeScript
+- [x] Node.js + Express
+- [x] PostgreSQL + Prisma + relational schema
+- [x] WebSocket real-time feed
+- [x] node-cron background scheduler
 - [x] server-side validation
-- [x] structured error handling
-- [x] role-based authorization
-- [x] persistent activity log
+- [x] structured errors
+- [x] RBAC and project ownership
+- [x] persisted activity logs
+- [x] missed activity recovery
 - [x] live presence
-- [x] missed-event recovery from DB
-- [x] notifications and live unread count
-- [x] URL query filters
+- [x] persisted notifications + live unread count
+- [x] URL-query task filters
 - [x] required seed dataset
 
-## API overview
-`POST /api/auth/login`  
-`GET /api/auth/me`  
-`GET/POST /api/projects`  
-`GET/POST /api/tasks`  
-`PATCH /api/tasks/:id/status`  
-`GET /api/activity`  
-`GET/PATCH/POST /api/notifications`  
-`GET /api/dashboard`
-
-## License
-Assessment implementation for Velozity Global Solutions.
+## Known limitation
+The repository contains the complete runnable application and deployment configuration, but an external Vercel/API deployment requires the deployer's own hosting credentials and PostgreSQL connection string; those secrets are intentionally not committed.
